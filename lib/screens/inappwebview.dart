@@ -1,6 +1,6 @@
 import 'dart:io';
-
-import 'package:airpay_package/model/user.dart';
+import 'package:airpay_package/model/transaction.dart';
+import 'package:airpay_package/model/UserRequest.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -14,10 +14,10 @@ import 'package:xml2json/xml2json.dart';
 typedef void Closure(bool val);
 
 class AirPay extends StatefulWidget {
-  final User user;
-  final Closure callback;
+  final UserRequest user;
+  final VoidCallback onTap;
 
-  AirPay({Key key, @required this.user, this.callback}) : super(key: key);
+  AirPay({Key key, @required this.user, this.onTap}) : super(key: key);
   @override
   _AirPayState createState() => new _AirPayState();
 }
@@ -42,10 +42,25 @@ class _AirPayState extends State<AirPay> {
     var encoded = base64.encode(bytes);
     var user = widget.user;
 
+    String productionURL = "https://payments.airpay.co.in/pay/index.php";
+    String productionFailedURL = "https://payments.airpay.co.in/error.php";
+
+    // String productionVPAURL = "https://payments.airpay.co.in/upi/v.php";
+    String stagingURL = "https://payments.airpay.ninja/pay/index.php";
+    String stagingFailedURL = "https://payments.airpay.ninja/error.php";
+    // String stagingVPAURL = "https://payments.airpay.ninja/upi/v.php";
+
+    var isGateWay = (user.isStaging != null && user.isStaging == true)
+        ? stagingURL
+        : productionURL;
+    user.failedUrl = (user.isStaging != null && user.isStaging == true)
+        ? stagingFailedURL
+        : productionFailedURL;
+
     var url = "<!DOCTYPE html>" +
         "<html>" +
         "<body onload='document.frm1.submit()'>" +
-        "<form action='https://payments.airpay.co.in/pay/index.php' method='post' name='frm1'>" +
+        "<form action='$isGateWay' method='post' name='frm1'>" +
         "  <input type='hidden' name='mer_dom' value='$encoded'><br>" +
         "  <input type='hidden' name='currency' value='${user.currency}'><br>" +
         "  <input type='hidden' name='isocurrency' value='${user.isCurrency}'><br>" +
@@ -80,8 +95,15 @@ class _AirPayState extends State<AirPay> {
   }
 
   fetchDetails() async {
-    String urlString = "https://payments.airpay.co.in/sdk/a.php";
+    var user = widget.user;
 
+    String stagingDataURL = "https://payments.airpay.ninja/sdk/a.php";
+    String productionDataURL = "https://payments.airpay.co.in/sdk/a.php";
+    var isGateWay = (user.isStaging != null && user.isStaging == true)
+        ? stagingDataURL
+        : productionDataURL;
+
+    String urlString = isGateWay;
     var date = new DateTime.now();
     var format = DateFormat("dd/MM/yyyy HH:mm:ss");
     var formattedDate = format.format(date);
@@ -113,43 +135,19 @@ class _AirPayState extends State<AirPay> {
     var stingDAta = response.data.toString();
     stingDAta = stingDAta.replaceAll("<![CDATA[", "").replaceAll("]]>", "");
     myTransformer.parse(stingDAta);
-    var document = myTransformer.toBadgerfish();
+    var document = myTransformer.toParker();
     var data = json.decode(document);
-    print("document $data");
-    Navigator.pop(context, data);
-
-    // var params = jsonEncode(<String, dynamic>{
-    //   'privatekey': privatekey,
-    //   'orderID': widget.user.orderid,
-    //   'mercid': widget.user.merchantId,
-    //   'checksum': checksum,
-    //   'datetime': formattedDate,
-    // });
-    // var paramsData = utf8.encode(
-    // 'privatekey=$privatekey&orderid=${widget.user.orderid}&mercid=${widget.user.merchantId}&checksum=$checksum&datetime=$formattedDate');
-
-//     final url = Uri.parse(urlString);
-//     final request = http.Request("POST", url);
-//     request.headers.addAll(<String, String>{
-//       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-//     });
-//     request.bodyBytes = paramsData;
-// final myTransformer = Xml2Json();
-//   return await request.send().then((response) {
-//     return response.stream.bytesToString();
-//   }).then((bodyString) {
-//     myTransformer.parse(bodyString);
-//     var json = myTransformer.toGData();
-//     print(json);
-//   });
+    Transaction transaction = Transaction();
+    transaction.sTATUS = '500';
+    if (data != null && data['RESPONSE'] != null) {
+      if (data['RESPONSE']['TRANSACTION'] != null) {
+        transaction = Transaction.fromJson(data['RESPONSE']['TRANSACTION']);
+      }
+    }
+    print("Transaction $data");
+    Navigator.pop(context, transaction);
+    widget.onTap;
   }
-  // });
-  //   if (response.statusCode != 200)
-  //     return Future.error("error: status code ${response.statusCode}");
-  //   else if (response.statusCode == 200) {
-  //     print("object $response");
-  //   }
-  // }
 
   _showConfirmation(context, message) async {
     await showDialog<String>(
@@ -262,7 +260,7 @@ class _AirPayState extends State<AirPay> {
           Container(
               // padding: EdgeInsets.all(10.0),
               child: progress < 1.0
-                  ? SpinKitRotatingCircle(
+                  ? SpinKitCircle(
                       color: Colors.blue[900],
                       size: 50.0,
                     )
@@ -298,9 +296,7 @@ class _AirPayState extends State<AirPay> {
                   }
 
                   if (succesPath == webURLPath) {
-                    // _webViewController.stopLoading();
                     fetchDetails();
-                    // widget.callback(true);
                     print("onLoadStart : Success");
                   } else if (widget.user.failedUrl == webURLPath) {
                     Navigator.pop(context, false);
@@ -316,16 +312,18 @@ class _AirPayState extends State<AirPay> {
 
                 setState(() {
                   this.url = url;
+                  var failurePath = widget.user.failedUrl;//getProtoDomain(widget.user.failedUrl);
+
                   if (url
-                      .startsWith('https://payments.airpay.ninja/error.php')) {
+                      .startsWith(failurePath)) {
                     setState(() {
-                      controller.loadUrl(url: ht);
-                      print('ht: $url');
+                      // controller.loadUrl(url: ht);
+                      // print('ht: $url');
                       print('onLoad Stop in - $url');
                       Navigator.pop(context, false);
                     });
                   } else {
-                    print('on Load Stop: not error URL: \n $url');
+                    print('on Load Stop: not error URL: $url');
                   }
                 });
               },
